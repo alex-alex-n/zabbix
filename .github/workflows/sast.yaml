@@ -6,7 +6,7 @@ on:
   pull_request:
     branches: [ master, main ]
   schedule:
-    - cron: '0 0 * * 0'  # weekly
+    - cron: '0 0 * * 0'
 
 permissions:
   contents: read
@@ -41,7 +41,6 @@ jobs:
         working-directory: ui
         run: |
           mkdir -p ../sast-out
-          # Paths may differ between Zabbix versions; analyze what exists
           TARGETS=""
           [ -d app ] && TARGETS="$TARGETS app"
           [ -d classes ] && TARGETS="$TARGETS classes"
@@ -50,16 +49,46 @@ jobs:
           phpstan analyse $TARGETS --level=8 --no-progress --error-format=github \
             > ../sast-out/phpstan-results.txt || true
 
-      - name: Run Psalm (Security Analysis)
+      - name: Generate minimal psalm.xml if missing
+        working-directory: ui
+        run: |
+          # If project already has config, keep it.
+          if [ -f psalm.xml ]; then
+            echo "psalm.xml exists"
+            exit 0
+          fi
+
+          if [ -f psalm.xml.dist ]; then
+            echo "psalm.xml.dist exists, copying to psalm.xml"
+            cp psalm.xml.dist psalm.xml
+            exit 0
+          fi
+
+          echo "No psalm config found, generating minimal psalm.xml"
+          cat > psalm.xml <<'XML'
+          <?xml version="1.0"?>
+          <psalm
+            errorLevel="4"
+            resolveFromConfigFile="true"
+            xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+            xsi:noNamespaceSchemaLocation="vendor/vimeo/psalm/config.xsd"
+          >
+            <projectFiles>
+              <directory name="."/>
+              <ignoreFiles>
+                <directory name="vendor"/>
+                <directory name="node_modules"/>
+              </ignoreFiles>
+            </projectFiles>
+          </psalm>
+          XML
+
+      - name: Run Psalm (Static/Security Analysis)
         working-directory: ui
         run: |
           mkdir -p ../sast-out
-          # If no psalm config exists, run in "no config" mode.
-          if [ -f psalm.xml ] || [ -f psalm.xml.dist ]; then
-            psalm --stats --output-format=github > ../sast-out/psalm-results.txt || true
-          else
-            psalm --no-config --stats --output-format=github . > ../sast-out/psalm-results.txt || true
-          fi
+          psalm --config=psalm.xml --stats --output-format=github \
+            > ../sast-out/psalm-results.txt || true
 
       - name: Upload PHP results
         uses: actions/upload-artifact@v4
@@ -115,7 +144,6 @@ jobs:
         run: |
           mkdir -p sast-out
           : > sast-out/gosec-results.txt
-          # Find all Go modules and scan each
           while IFS= read -r dir; do
             echo "Analyzing Go module in $dir" | tee -a sast-out/gosec-results.txt
             ( cd "$dir" && "$HOME/go/bin/gosec" ./... ) 2>&1 | tee -a sast-out/gosec-results.txt || true
@@ -164,7 +192,6 @@ jobs:
       - name: Run ESLint security analysis
         run: |
           mkdir -p sast-out
-          # Don't fail the job; store JSON output
           npx eslint "ui/assets/js/**/*.js" --format=json > sast-out/eslint-results.json 2>/dev/null || true
 
       - name: Upload JavaScript results
