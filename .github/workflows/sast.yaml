@@ -1,4 +1,3 @@
-```yaml
 name: SAST Security Scan # имя workflow в GitHub Actions
 
 on: # когда запускать workflow
