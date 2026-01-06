@@ -257,4 +257,3 @@ jobs: # список jobs
           path: | # что загрузить
             sast-summary.html # HTML отчёт
             artifacts/ # папка со скачанными артефактами
-```
