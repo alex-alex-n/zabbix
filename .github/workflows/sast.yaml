@@ -24,9 +24,16 @@ jobs:
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
         with:
-          php-version: '8.1'
+          php-version: '8.2'
           coverage: none
           tools: composer, phpstan, psalm
+
+      - name: Show PHP & tool versions
+        run: |
+          php -v
+          composer -V
+          phpstan --version || true
+          psalm --version || true
 
       - name: Install UI PHP dependencies (if composer.json exists)
         working-directory: ui
@@ -37,22 +44,9 @@ jobs:
             echo "ui/composer.json not found, skipping composer install"
           fi
 
-      - name: Run PHPStan (Static Analysis)
-        working-directory: ui
-        run: |
-          mkdir -p ../sast-out
-          TARGETS=""
-          [ -d app ] && TARGETS="$TARGETS app"
-          [ -d classes ] && TARGETS="$TARGETS classes"
-          [ -d include ] && TARGETS="$TARGETS include"
-          [ -z "$TARGETS" ] && TARGETS="."
-          phpstan analyse $TARGETS --level=8 --no-progress --error-format=github \
-            > ../sast-out/phpstan-results.txt || true
-
       - name: Generate minimal psalm.xml if missing
         working-directory: ui
         run: |
-          # If project already has config, keep it.
           if [ -f psalm.xml ]; then
             echo "psalm.xml exists"
             exit 0
@@ -64,7 +58,6 @@ jobs:
             exit 0
           fi
 
-          echo "No psalm config found, generating minimal psalm.xml"
           cat > psalm.xml <<'XML'
           <?xml version="1.0"?>
           <psalm
@@ -82,6 +75,18 @@ jobs:
             </projectFiles>
           </psalm>
           XML
+
+      - name: Run PHPStan (Static Analysis)
+        working-directory: ui
+        run: |
+          mkdir -p ../sast-out
+          TARGETS=""
+          [ -d app ] && TARGETS="$TARGETS app"
+          [ -d classes ] && TARGETS="$TARGETS classes"
+          [ -d include ] && TARGETS="$TARGETS include"
+          [ -z "$TARGETS" ] && TARGETS="."
+          phpstan analyse $TARGETS --level=8 --no-progress --error-format=github \
+            > ../sast-out/phpstan-results.txt || true
 
       - name: Run Psalm (Static/Security Analysis)
         working-directory: ui
