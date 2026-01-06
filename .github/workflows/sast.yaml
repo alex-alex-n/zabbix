@@ -6,116 +6,151 @@ on:
   pull_request:
     branches: [ master, main ]
   schedule:
-    - cron: '0 0 * * 0'  # Еженедельное сканирование
+    - cron: '0 0 * * 0'  # weekly
+
+permissions:
+  contents: read
 
 jobs:
   sast-php:
     name: SAST PHP (PHPStan & Psalm)
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
         with:
           php-version: '8.1'
           coverage: none
-          tools: composer
-      
-      - name: Install PHP dependencies
+          tools: composer, phpstan, psalm
+
+      - name: Install UI PHP dependencies (if composer.json exists)
+        working-directory: ui
         run: |
-          cd ui  # Переходим в директорию с PHP-кодом Zabbix
-          composer install --no-progress --no-interaction
-      
+          if [ -f composer.json ]; then
+            composer install --no-interaction --no-progress --prefer-dist
+          else
+            echo "ui/composer.json not found, skipping composer install"
+          fi
+
       - name: Run PHPStan (Static Analysis)
+        working-directory: ui
         run: |
-          cd ui
-          ./vendor/bin/phpstan analyse app/ classes/ --level=8 --error-format=github > phpstan-results.txt || true
-      
+          mkdir -p ../sast-out
+          # Paths may differ between Zabbix versions; analyze what exists
+          TARGETS=""
+          [ -d app ] && TARGETS="$TARGETS app"
+          [ -d classes ] && TARGETS="$TARGETS classes"
+          [ -d include ] && TARGETS="$TARGETS include"
+          [ -z "$TARGETS" ] && TARGETS="."
+          phpstan analyse $TARGETS --level=8 --no-progress --error-format=github \
+            > ../sast-out/phpstan-results.txt || true
+
       - name: Run Psalm (Security Analysis)
+        working-directory: ui
         run: |
-          cd ui
-          ./vendor/bin/psalm --shepherd --stats --output-format=github > psalm-results.txt || true
-      
+          mkdir -p ../sast-out
+          # If no psalm config exists, run in "no config" mode.
+          if [ -f psalm.xml ] || [ -f psalm.xml.dist ]; then
+            psalm --stats --output-format=github > ../sast-out/psalm-results.txt || true
+          else
+            psalm --no-config --stats --output-format=github . > ../sast-out/psalm-results.txt || true
+          fi
+
       - name: Upload PHP results
         uses: actions/upload-artifact@v4
         with:
           name: sast-php-results
           path: |
-            ui/phpstan-results.txt
-            ui/psalm-results.txt
+            sast-out/phpstan-results.txt
+            sast-out/psalm-results.txt
 
   sast-c:
     name: SAST C/C++ (Cppcheck)
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Install Cppcheck
         run: sudo apt-get update && sudo apt-get install -y cppcheck
-      
+
       - name: Run Cppcheck Analysis
         run: |
-          # Анализируем основные исходники C, исключая сторонние библиотеки
+          mkdir -p sast-out
           cppcheck --enable=all --suppress=missingIncludeSystem \
                    --inline-suppr --error-exitcode=0 \
-                   src/ 2> cppcheck-results.txt
-      
+                   src/ 2> sast-out/cppcheck-results.txt || true
+
       - name: Upload C results
         uses: actions/upload-artifact@v4
         with:
           name: sast-c-results
-          path: cppcheck-results.txt
+          path: sast-out/cppcheck-results.txt
 
   sast-go:
     name: SAST Go (Gosec)
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Setup Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5
         with:
           go-version: '1.21'
-      
+
       - name: Install Gosec
         run: go install github.com/securego/gosec/v2/cmd/gosec@latest
-      
+
       - name: Run Gosec Analysis
         run: |
-          # Ищем все Go-модули в проекте
-          find . -name "go.mod" -exec dirname {} \; | while read dir; do
-            echo "Analyzing Go module in $dir"
-            cd "$dir"
-            ~/go/bin/gosec ./... 2>&1 | tee -a ../gosec-results.txt
-            cd -
-          done
-      
+          mkdir -p sast-out
+          : > sast-out/gosec-results.txt
+          # Find all Go modules and scan each
+          while IFS= read -r dir; do
+            echo "Analyzing Go module in $dir" | tee -a sast-out/gosec-results.txt
+            ( cd "$dir" && "$HOME/go/bin/gosec" ./... ) 2>&1 | tee -a sast-out/gosec-results.txt || true
+            echo "" >> sast-out/gosec-results.txt
+          done < <(find . -name "go.mod" -exec dirname {} \; | sort -u)
+
       - name: Upload Go results
         uses: actions/upload-artifact@v4
         with:
           name: sast-go-results
-          path: gosec-results.txt
+          path: sast-out/gosec-results.txt
 
   sast-js:
     name: SAST JavaScript (ESLint)
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '18'
-      
-      - name: Install ESLint security plugin
+
+      - name: Install ESLint + security plugin
         run: |
           npm init -y
           npm install eslint eslint-plugin-security --save-dev
-      
+
       - name: Create minimal ESLint config
         run: |
-          echo '{
+          cat > .eslintrc.json <<'JSON'
+          {
             "plugins": ["security"],
             "rules": {
               "security/detect-object-injection": "error",
@@ -123,57 +158,89 @@ jobs:
               "security/detect-non-literal-require": "error",
               "security/detect-unsafe-regex": "error"
             }
-          }' > .eslintrc.json
-      
+          }
+          JSON
+
       - name: Run ESLint security analysis
         run: |
-          npx eslint "ui/assets/js/**/*.js" --format=json > eslint-results.json 2>/dev/null || true
-      
+          mkdir -p sast-out
+          # Don't fail the job; store JSON output
+          npx eslint "ui/assets/js/**/*.js" --format=json > sast-out/eslint-results.json 2>/dev/null || true
+
       - name: Upload JavaScript results
         uses: actions/upload-artifact@v4
         with:
           name: sast-js-results
-          path: eslint-results.json
+          path: sast-out/eslint-results.json
 
   generate-report:
     name: Generate Summary Report
     runs-on: ubuntu-latest
     needs: [sast-php, sast-c, sast-go, sast-js]
     if: always()
+    defaults:
+      run:
+        shell: bash
     steps:
       - name: Download all SAST results
         uses: actions/download-artifact@v4
-      
+        with:
+          path: artifacts
+
       - name: Create HTML summary
         run: |
-          echo "<html><body><h1>SAST Results Summary</h1>" > sast-summary.html
-          echo "<p>Generated on $(date)</p>" >> sast-summary.html
-          
-          # PHP Results
-          echo "<h2>PHP Analysis</h2>" >> sast-summary.html
-          if [ -f "sast-php-results/ui/phpstan-results.txt" ]; then
-            echo "<h3>PHPStan:</h3><pre>" >> sast-summary.html
-            tail -20 "sast-php-results/ui/phpstan-results.txt" | head -10 >> sast-summary.html
-            echo "</pre>" >> sast-summary.html
+          OUT="sast-summary.html"
+          echo "<html><body><h1>SAST Results Summary</h1>" > "$OUT"
+          echo "<p>Generated on $(date -u)</p>" >> "$OUT"
+
+          echo "<h2>PHP Analysis</h2>" >> "$OUT"
+          if [ -f "artifacts/sast-php-results/phpstan-results.txt" ]; then
+            echo "<h3>PHPStan (last 50 lines)</h3><pre>" >> "$OUT"
+            tail -50 "artifacts/sast-php-results/phpstan-results.txt" >> "$OUT"
+            echo "</pre>" >> "$OUT"
+          else
+            echo "<p>PHPStan results not found</p>" >> "$OUT"
           fi
-          
-          # C Results
-          echo "<h2>C/C++ Analysis</h2>" >> sast-summary.html
-          if [ -f "sast-c-results/cppcheck-results.txt" ]; then
-            echo "<h3>Cppcheck (первые 10 предупреждений):</h3><pre>" >> sast-summary.html
-            grep -E "(error|warning)" "sast-c-results/cppcheck-results.txt" | head -10 >> sast-summary.html
-            echo "</pre>" >> sast-summary.html
+
+          if [ -f "artifacts/sast-php-results/psalm-results.txt" ]; then
+            echo "<h3>Psalm (last 50 lines)</h3><pre>" >> "$OUT"
+            tail -50 "artifacts/sast-php-results/psalm-results.txt" >> "$OUT"
+            echo "</pre>" >> "$OUT"
+          else
+            echo "<p>Psalm results not found</p>" >> "$OUT"
           fi
-          
-          echo "</body></html>" >> sast-summary.html
-      
-      - name: Upload final report
+
+          echo "<h2>C/C++ Analysis</h2>" >> "$OUT"
+          if [ -f "artifacts/sast-c-results/cppcheck-results.txt" ]; then
+            echo "<h3>Cppcheck (first 30 warnings/errors)</h3><pre>" >> "$OUT"
+            grep -E "(error|warning)" "artifacts/sast-c-results/cppcheck-results.txt" | head -30 >> "$OUT" || true
+            echo "</pre>" >> "$OUT"
+          else
+            echo "<p>Cppcheck results not found</p>" >> "$OUT"
+          fi
+
+          echo "<h2>Go Analysis</h2>" >> "$OUT"
+          if [ -f "artifacts/sast-go-results/gosec-results.txt" ]; then
+            echo "<h3>Gosec (last 80 lines)</h3><pre>" >> "$OUT"
+            tail -80 "artifacts/sast-go-results/gosec-results.txt" >> "$OUT"
+            echo "</pre>" >> "$OUT"
+          else
+            echo "<p>Gosec results not found</p>" >> "$OUT"
+          fi
+
+          echo "<h2>JavaScript Analysis</h2>" >> "$OUT"
+          if [ -f "artifacts/sast-js-results/eslint-results.json" ]; then
+            echo "<p>ESLint JSON saved as artifact (see artifacts).</p>" >> "$OUT"
+          else
+            echo "<p>ESLint results not found</p>" >> "$OUT"
+          fi
+
+          echo "</body></html>" >> "$OUT"
+
+      - name: Upload final report + all artifacts bundle
         uses: actions/upload-artifact@v4
         with:
           name: sast-final-report
           path: |
             sast-summary.html
-            sast-php-results/
-            sast-c-results/
-            sast-go-results/
-            sast-js-results/
+            artifacts/
