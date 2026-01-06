@@ -28,13 +28,6 @@ jobs:
           coverage: none
           tools: composer, phpstan, psalm
 
-      - name: Show PHP & tool versions
-        run: |
-          php -v
-          composer -V
-          phpstan --version || true
-          psalm --version || true
-
       - name: Install UI PHP dependencies (if composer.json exists)
         working-directory: ui
         run: |
@@ -44,21 +37,10 @@ jobs:
             echo "ui/composer.json not found, skipping composer install"
           fi
 
-      - name: Generate minimal psalm.xml if missing
+      - name: Create CI psalm config (avoid missing dirs like node_modules)
         working-directory: ui
         run: |
-          if [ -f psalm.xml ]; then
-            echo "psalm.xml exists"
-            exit 0
-          fi
-
-          if [ -f psalm.xml.dist ]; then
-            echo "psalm.xml.dist exists, copying to psalm.xml"
-            cp psalm.xml.dist psalm.xml
-            exit 0
-          fi
-
-          cat > psalm.xml <<'XML'
+          cat > psalm-ci.xml <<'XML'
           <?xml version="1.0"?>
           <psalm
             errorLevel="4"
@@ -70,7 +52,6 @@ jobs:
               <directory name="."/>
               <ignoreFiles>
                 <directory name="vendor"/>
-                <directory name="node_modules"/>
               </ignoreFiles>
             </projectFiles>
           </psalm>
@@ -92,7 +73,7 @@ jobs:
         working-directory: ui
         run: |
           mkdir -p ../sast-out
-          psalm --config=psalm.xml --stats --output-format=github \
+          psalm --config=psalm-ci.xml --stats --output-format=github \
             > ../sast-out/psalm-results.txt || true
 
       - name: Upload PHP results
