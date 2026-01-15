@@ -1,204 +1,305 @@
-# Название рабочего процесса
+# Имя workflow
 name: SAST Security Scan
 
-# Триггеры запуска
+# Секция триггеров
 on:
-  # При пуше в указанные ветки
+  # Триггер: push
   push:
+    # Целевые ветки
     branches: [ master, main, develop ]
-  # При создании пул-реквеста в указанные ветки
+  # Триггер: pull_request
   pull_request:
+    # Целевые ветки
     branches: [ master, main ]
-  # По расписанию: каждое воскресенье в 00:00
+  # Триггер: schedule
   schedule:
+    # Cron выражение
     - cron: '0 0 * * 0'
 
-# Права доступа для токена GitHub
+# Права доступа
 permissions:
+  # Право на чтение содержимого
   contents: read
 
-# Определение заданий (jobs)
+# Определение заданий
 jobs:
-  # Задание для анализа PHP кода
+  # Первое задание: анализ PHP
   sast-php:
+    # Имя задания
     name: SAST PHP (PHPStan & Psalm)
-    # Запуск на последнем Ubuntu
+    # ОС для запуска
     runs-on: ubuntu-latest
+    # Настройки по умолчанию
     defaults:
+      # Команды выполняются в bash
       run:
         shell: bash
+    # Шаги задания
     steps:
-      # Шаг 1: Получение кода репозитория
+      # Шаг 1: Checkout кода
       - uses: actions/checkout@v4
 
-      # Шаг 2: Настройка PHP среды
+      # Шаг 2: Настройка PHP
       - name: Setup PHP
+        # Используем action для PHP
         uses: shivammathur/setup-php@v2
+        # Параметры action
         with:
+          # Версия PHP
           php-version: '8.2'
+          # Без покрытия кода
           coverage: none
+          # Инструменты для установки
           tools: composer, phpstan, psalm
 
-      # Шаг 3: Установка PHP зависимостей в директории ui
+      # Шаг 3: Установка зависимостей
       - name: Install UI PHP dependencies (if composer.json exists)
+        # Рабочая директория
         working-directory: ui
+        # Команда для выполнения
         run: |
+          # Проверка наличия composer.json
           if [ -f composer.json ]; then
+            # Установка зависимостей
             composer install --no-interaction --no-progress --prefer-dist
           else
+            # Сообщение если файл не найден
             echo "ui/composer.json not found, skipping composer install"
           fi
 
-      # Шаг 4: Создание конфигурации Psalm для CI
+      # Шаг 4: Создание конфига Psalm
       - name: Create CI psalm config (avoid missing dirs like node_modules)
+        # Рабочая директория
         working-directory: ui
+        # Команда для выполнения
         run: |
+          # Создание XML конфига
           cat > psalm-ci.xml <<'XML'
           <?xml version="1.0"?>
+          # Настройки Psalm
           <psalm
+            # Уровень ошибок
             errorLevel="4"
+            # Разрешение из конфига
             resolveFromConfigFile="true"
+            # XML namespace
             xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+            # Схема конфига
             xsi:noNamespaceSchemaLocation="vendor/vimeo/psalm/config.xsd"
           >
+            # Файлы проекта
             <projectFiles>
+              # Директория для анализа
               <directory name="."/>
+              # Игнорируемые файлы
               <ignoreFiles>
+                # Директория vendor
                 <directory name="vendor"/>
               </ignoreFiles>
             </projectFiles>
           </psalm>
           XML
 
-      # Шаг 5: Запуск PHPStan статического анализатора
+      # Шаг 5: Запуск PHPStan
       - name: Run PHPStan (Static Analysis)
+        # Рабочая директория
         working-directory: ui
+        # Команда для выполнения
         run: |
+          # Создание директории для результатов
           mkdir -p ../sast-out
+          # Инициализация переменной
           TARGETS=""
+          # Проверка директорий
           [ -d app ] && TARGETS="$TARGETS app"
           [ -d classes ] && TARGETS="$TARGETS classes"
           [ -d include ] && TARGETS="$TARGETS include"
+          # Если нет директорий - текущая директория
           [ -z "$TARGETS" ] && TARGETS="."
+          # Запуск PHPStan
           phpstan analyse $TARGETS --level=8 --no-progress --error-format=github \
+            # Сохранение результатов
             > ../sast-out/phpstan-results.txt || true
 
-      # Шаг 6: Запуск Psalm статического/безопасностного анализатора
+      # Шаг 6: Запуск Psalm
       - name: Run Psalm (Static/Security Analysis)
+        # Рабочая директория
         working-directory: ui
+        # Команда для выполнения
         run: |
+          # Создание директории
           mkdir -p ../sast-out
+          # Запуск Psalm
           psalm --config=psalm-ci.xml --stats --output-format=github \
+            # Сохранение результатов
             > ../sast-out/psalm-results.txt || true
 
-      # Шаг 7: Загрузка результатов PHP анализа как артефакта
+      # Шаг 7: Загрузка результатов
       - name: Upload PHP results
+        # Action для загрузки артефактов
         uses: actions/upload-artifact@v4
+        # Параметры action
         with:
+          # Имя артефакта
           name: sast-php-results
+          # Пути к файлам
           path: |
+            # Файл результатов PHPStan
             sast-out/phpstan-results.txt
+            # Файл результатов Psalm
             sast-out/psalm-results.txt
 
-  # Задание для анализа C/C++ кода
+  # Второе задание: анализ C/C++
   sast-c:
+    # Имя задания
     name: SAST C/C++ (Cppcheck)
+    # ОС для запуска
     runs-on: ubuntu-latest
+    # Настройки по умолчанию
     defaults:
+      # Команды выполняются в bash
       run:
         shell: bash
+    # Шаги задания
     steps:
-      # Шаг 1: Получение кода репозитория
+      # Шаг 1: Checkout кода
       - uses: actions/checkout@v4
 
       # Шаг 2: Установка Cppcheck
       - name: Install Cppcheck
+        # Команда установки
         run: sudo apt-get update && sudo apt-get install -y cppcheck
 
-      # Шаг 3: Запуск анализа Cppcheck
+      # Шаг 3: Запуск анализа
       - name: Run Cppcheck Analysis
+        # Команда для выполнения
         run: |
+          # Создание директории
           mkdir -p sast-out
+          # Запуск Cppcheck
           cppcheck --enable=all --suppress=missingIncludeSystem \
+                   # Дополнительные параметры
                    --inline-suppr --error-exitcode=0 \
+                   # Целевая директория
                    src/ 2> sast-out/cppcheck-results.txt || true
 
-      # Шаг 4: Загрузка результатов C анализа как артефакта
+      # Шаг 4: Загрузка результатов
       - name: Upload C results
+        # Action для загрузки
         uses: actions/upload-artifact@v4
+        # Параметры action
         with:
+          # Имя артефакта
           name: sast-c-results
+          # Путь к файлу
           path: sast-out/cppcheck-results.txt
 
-  # Задание для анализа Go кода
+  # Третье задание: анализ Go
   sast-go:
+    # Имя задания
     name: SAST Go (Gosec)
+    # ОС для запуска
     runs-on: ubuntu-latest
+    # Настройки по умолчанию
     defaults:
+      # Команды выполняются в bash
       run:
         shell: bash
+    # Шаги задания
     steps:
-      # Шаг 1: Получение кода репозитория
+      # Шаг 1: Checkout кода
       - uses: actions/checkout@v4
 
-      # Шаг 2: Настройка Go среды
+      # Шаг 2: Настройка Go
       - name: Setup Go
+        # Action для настройки Go
         uses: actions/setup-go@v5
+        # Параметры action
         with:
+          # Версия Go
           go-version: '1.21'
 
       # Шаг 3: Установка Gosec
       - name: Install Gosec
+        # Команда установки
         run: go install github.com/securego/gosec/v2/cmd/gosec@latest
 
-      # Шаг 4: Запуск анализа Gosec для всех найденных Go модулей
+      # Шаг 4: Запуск анализа
       - name: Run Gosec Analysis
+        # Команда для выполнения
         run: |
+          # Создание директории
           mkdir -p sast-out
+          # Очистка файла результатов
           : > sast-out/gosec-results.txt
+          # Поиск всех go.mod файлов
           while IFS= read -r dir; do
+            # Вывод информации
             echo "Analyzing Go module in $dir" | tee -a sast-out/gosec-results.txt
+            # Запуск Gosec
             ( cd "$dir" && "$HOME/go/bin/gosec" ./... ) 2>&1 | tee -a sast-out/gosec-results.txt || true
+            # Пустая строка
             echo "" >> sast-out/gosec-results.txt
+          # Поиск директорий с go.mod
           done < <(find . -name "go.mod" -exec dirname {} \; | sort -u)
 
-      # Шаг 5: Загрузка результатов Go анализа как артефакта
+      # Шаг 5: Загрузка результатов
       - name: Upload Go results
+        # Action для загрузки
         uses: actions/upload-artifact@v4
+        # Параметры action
         with:
+          # Имя артефакта
           name: sast-go-results
+          # Путь к файлу
           path: sast-out/gosec-results.txt
 
-  # Задание для анализа JavaScript кода
+  # Четвертое задание: анализ JavaScript
   sast-js:
+    # Имя задания
     name: SAST JavaScript (ESLint)
+    # ОС для запуска
     runs-on: ubuntu-latest
+    # Настройки по умолчанию
     defaults:
+      # Команды выполняются в bash
       run:
         shell: bash
+    # Шаги задания
     steps:
-      # Шаг 1: Получение кода репозитория
+      # Шаг 1: Checkout кода
       - uses: actions/checkout@v4
 
-      # Шаг 2: Настройка Node.js среды
+      # Шаг 2: Настройка Node.js
       - name: Setup Node.js
+        # Action для настройки Node.js
         uses: actions/setup-node@v4
+        # Параметры action
         with:
+          # Версия Node.js
           node-version: '18'
 
-      # Шаг 3: Установка ESLint и плагина безопасности
+      # Шаг 3: Установка ESLint
       - name: Install ESLint + security plugin
+        # Команда для выполнения
         run: |
+          # Инициализация npm проекта
           npm init -y
+          # Установка ESLint и плагина безопасности
           npm install eslint eslint-plugin-security --save-dev
 
-      # Шаг 4: Создание минимальной конфигурации ESLint
+      # Шаг 4: Создание конфига ESLint
       - name: Create minimal ESLint config
+        # Команда для выполнения
         run: |
+          # Создание JSON конфига
           cat > .eslintrc.json <<'JSON'
           {
+            # Подключаемые плагины
             "plugins": ["security"],
+            # Правила ESLint
             "rules": {
+              # Правила безопасности
               "security/detect-object-injection": "error",
               "security/detect-eval-with-expression": "error",
               "security/detect-non-literal-require": "error",
@@ -207,93 +308,146 @@ jobs:
           }
           JSON
 
-      # Шаг 5: Запуск ESLint анализа безопасности
+      # Шаг 5: Запуск анализа
       - name: Run ESLint security analysis
+        # Команда для выполнения
         run: |
+          # Создание директории
           mkdir -p sast-out
+          # Запуск ESLint
           npx eslint "ui/assets/js/**/*.js" --format=json > sast-out/eslint-results.json 2>/dev/null || true
 
-      # Шаг 6: Загрузка результатов JavaScript анализа как артефакта
+      # Шаг 6: Загрузка результатов
       - name: Upload JavaScript results
+        # Action для загрузки
         uses: actions/upload-artifact@v4
+        # Параметры action
         with:
+          # Имя артефакта
           name: sast-js-results
+          # Путь к файлу
           path: sast-out/eslint-results.json
 
-  # Задание для генерации итогового отчета
+  # Пятое задание: генерация отчета
   generate-report:
+    # Имя задания
     name: Generate Summary Report
+    # ОС для запуска
     runs-on: ubuntu-latest
-    # Зависит от выполнения всех SAST заданий
+    # Зависимости от других заданий
     needs: [sast-php, sast-c, sast-go, sast-js]
-    # Всегда запускается, даже если предыдущие задания упали
+    # Условие запуска
     if: always()
+    # Настройки по умолчанию
     defaults:
+      # Команды выполняются в bash
       run:
         shell: bash
+    # Шаги задания
     steps:
-      # Шаг 1: Скачивание всех артефактов с результатами
+      # Шаг 1: Скачивание артефактов
       - name: Download all SAST results
+        # Action для скачивания артефактов
         uses: actions/download-artifact@v4
+        # Параметры action
         with:
+          # Путь для сохранения
           path: artifacts
 
-      # Шаг 2: Создание HTML отчета с краткими результатами
+      # Шаг 2: Создание HTML отчета
       - name: Create HTML summary
+        # Команда для выполнения
         run: |
+          # Имя выходного файла
           OUT="sast-summary.html"
+          # Заголовок отчета
           echo "<html><body><h1>SAST Results Summary</h1>" > "$OUT"
+          # Дата генерации
           echo "<p>Generated on $(date -u)</p>" >> "$OUT"
 
+          # Раздел PHP
           echo "<h2>PHP Analysis</h2>" >> "$OUT"
+          # Проверка наличия результатов PHPStan
           if [ -f "artifacts/sast-php-results/phpstan-results.txt" ]; then
+            # Заголовок для PHPStan
             echo "<h3>PHPStan (last 50 lines)</h3><pre>" >> "$OUT"
+            # Последние 50 строк результатов
             tail -50 "artifacts/sast-php-results/phpstan-results.txt" >> "$OUT"
+            # Закрытие pre тега
             echo "</pre>" >> "$OUT"
           else
+            # Сообщение если файл не найден
             echo "<p>PHPStan results not found</p>" >> "$OUT"
           fi
 
+          # Проверка наличия результатов Psalm
           if [ -f "artifacts/sast-php-results/psalm-results.txt" ]; then
+            # Заголовок для Psalm
             echo "<h3>Psalm (last 50 lines)</h3><pre>" >> "$OUT"
+            # Последние 50 строк результатов
             tail -50 "artifacts/sast-php-results/psalm-results.txt" >> "$OUT"
+            # Закрытие pre тега
             echo "</pre>" >> "$OUT"
           else
+            # Сообщение если файл не найден
             echo "<p>Psalm results not found</p>" >> "$OUT"
           fi
 
+          # Раздел C/C++
           echo "<h2>C/C++ Analysis</h2>" >> "$OUT"
+          # Проверка наличия результатов Cppcheck
           if [ -f "artifacts/sast-c-results/cppcheck-results.txt" ]; then
+            # Заголовок для Cppcheck
             echo "<h3>Cppcheck (first 30 warnings/errors)</h3><pre>" >> "$OUT"
+            # Поиск ошибок и предупреждений
             grep -E "(error|warning)" "artifacts/sast-c-results/cppcheck-results.txt" | head -30 >> "$OUT" || true
+            # Закрытие pre тега
             echo "</pre>" >> "$OUT"
           else
+            # Сообщение если файл не найден
             echo "<p>Cppcheck results not found</p>" >> "$OUT"
           fi
 
+          # Раздел Go
           echo "<h2>Go Analysis</h2>" >> "$OUT"
+          # Проверка наличия результатов Gosec
           if [ -f "artifacts/sast-go-results/gosec-results.txt" ]; then
+            # Заголовок для Gosec
             echo "<h3>Gosec (last 80 lines)</h3><pre>" >> "$OUT"
+            # Последние 80 строк результатов
             tail -80 "artifacts/sast-go-results/gosec-results.txt" >> "$OUT"
+            # Закрытие pre тега
             echo "</pre>" >> "$OUT"
           else
+            # Сообщение если файл не найден
             echo "<p>Gosec results not found</p>" >> "$OUT"
           fi
 
+          # Раздел JavaScript
           echo "<h2>JavaScript Analysis</h2>" >> "$OUT"
+          # Проверка наличия результатов ESLint
           if [ -f "artifacts/sast-js-results/eslint-results.json" ]; then
+            # Информация о JSON файле
             echo "<p>ESLint JSON saved as artifact (see artifacts).</p>" >> "$OUT"
           else
+            # Сообщение если файл не найден
             echo "<p>ESLint results not found</p>" >> "$OUT"
           fi
 
+          # Закрытие тегов HTML
           echo "</body></html>" >> "$OUT"
 
-      # Шаг 3: Загрузка финального отчета и всех артефактов
+      # Шаг 3: Загрузка отчета
       - name: Upload final report + all artifacts bundle
+        # Action для загрузки
         uses: actions/upload-artifact@v4
+        # Параметры action
         with:
+          # Имя финального артефакта
           name: sast-final-report
+          # Пути к файлам
           path: |
+            # HTML отчет
             sast-summary.html
+            # Все артефакты
             artifacts/
