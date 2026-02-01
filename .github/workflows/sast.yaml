@@ -1,299 +1,298 @@
 # Название рабочего процесса
-name: SAST Security Scan
+name: SAST Security Scan  # Название сканирования безопасности SAST
 
 # Триггеры запуска
-on:
+on:  # Определение событий, которые запускают процесс
   # При пуше в указанные ветки
-  push:
-    branches: [ master, main, develop ]
+  push:  # Конфигурация для событий пуша
+    branches: [ master, main, develop ]  # Ветки, для которых триггерятся события пуша
   # При создании пул-реквеста в указанные ветки
-  pull_request:
-    branches: [ master, main ]
+  pull_request:  # Конфигурация для событий пул-реквестов
+    branches: [ master, main ]  # Ветки, для которых триггерятся события пул-реквестов
   # По расписанию: каждое воскресенье в 00:00
-  schedule:
-    - cron: '0 0 * * 0'
+  schedule:  # Конфигурация для запуска по расписанию
+    - cron: '0 0 * * 0'  # Запуск каждое воскресенье в полночь по UTC
 
 # Права доступа для токена GitHub
-permissions:
-  contents: read
+permissions:  # Определение прав доступа
+  contents: read  # Разрешение на чтение содержимого репозитория
 
 # Определение заданий (jobs)
-jobs:
+jobs:  # Определение всех заданий
   # Задание для анализа PHP кода
-  sast-php:
-    name: SAST PHP (PHPStan & Psalm)
+  sast-php:  # Задание для статического анализа PHP
+    name: SAST PHP (PHPStan & Psalm)  # Имя задания
     # Запуск на последнем Ubuntu
-    runs-on: ubuntu-latest
-    defaults:
+    runs-on: ubuntu-latest  # Какой образ использовать для выполнения задания
+    defaults:  # Значения по умолчанию для заданий
       run:
-        shell: bash
-    steps:
+        shell: bash  # Используемая оболочка
+    steps:  # Определение шагов для данного задания
       # Шаг 1: Получение кода репозитория
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4  # Шаг для клонирования репозитория
 
       # Шаг 2: Настройка PHP среды
-      - name: Setup PHP
-        uses: shivammathur/setup-php@v2
+      - name: Setup PHP  # Название шага
+        uses: shivammathur/setup-php@v2  # Действие для настройки PHP
         with:
-          php-version: '8.2'
-          coverage: none
-          tools: composer, phpstan, psalm
+          php-version: '8.2'  # Указание версии PHP
+          coverage: none  # Отключение покрытия тестами
+          tools: composer, phpstan, psalm  # Устанавливаемые инструменты
 
       # Шаг 3: Установка PHP зависимостей в директории ui
-      - name: Install UI PHP dependencies (if composer.json exists)
-        working-directory: ui
+      - name: Install UI PHP dependencies (if composer.json exists)  # Название шага
+        working-directory: ui  # Рабочая директория
         run: |
-          if [ -f composer.json ]; then
-            composer install --no-interaction --no-progress --prefer-dist
+          if [ -f composer.json ]; then  # Условие на существование файла composer.json
+            composer install --no-interaction --no-progress --prefer-dist  # Установка зависимостей через Composer
           else
-            echo "ui/composer.json not found, skipping composer install"
-          fi
+            echo "ui/composer.json not found, skipping composer install"  # Сообщение об отсутствии файла
 
       # Шаг 4: Создание конфигурации Psalm для CI
-      - name: Create CI psalm config (avoid missing dirs like node_modules)
-        working-directory: ui
+      - name: Create CI psalm config (avoid missing dirs like node_modules)  # Название шага
+        working-directory: ui  # Рабочая директория
         run: |
-          cat > psalm-ci.xml <<'XML'
+          cat > psalm-ci.xml <<'XML'  # Создание файла конфигурации для Psalm
           <?xml version="1.0"?>
           <psalm
-            errorLevel="4"
-            resolveFromConfigFile="true"
+            errorLevel="4"  # Уровень ошибок
+            resolveFromConfigFile="true"  # Определение из файла конфигурации
             xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
             xsi:noNamespaceSchemaLocation="vendor/vimeo/psalm/config.xsd"
           >
             <projectFiles>
-              <directory name="."/>
+              <directory name="."/>  # Включаемые директории
               <ignoreFiles>
-                <directory name="vendor"/>
+                <directory name="vendor"/>  # Исключаемые директории
               </ignoreFiles>
             </projectFiles>
           </psalm>
           XML
 
       # Шаг 5: Запуск PHPStan статического анализатора
-      - name: Run PHPStan (Static Analysis)
-        working-directory: ui
+      - name: Run PHPStan (Static Analysis)  # Название шага
+        working-directory: ui  # Рабочая директория
         run: |
-          mkdir -p ../sast-out
+          mkdir -p ../sast-out  # Создание директории для результатов
           TARGETS=""
-          [ -d app ] && TARGETS="$TARGETS app"
-          [ -d classes ] && TARGETS="$TARGETS classes"
-          [ -d include ] && TARGETS="$TARGETS include"
-          [ -z "$TARGETS" ] && TARGETS="."
+          [ -d app ] && TARGETS="$TARGETS app"  # Условие для директории app
+          [ -d classes ] && TARGETS="$TARGETS classes"  # Условие для директории classes
+          [ -d include ] && TARGETS="$TARGETS include"  # Условие для директории include
+          [ -z "$TARGETS" ] && TARGETS="."  # Условие, если ни одна из директорий не найдена
           phpstan analyse $TARGETS --level=8 --no-progress --error-format=github \
-            > ../sast-out/phpstan-results.txt || true
+            > ../sast-out/phpstan-results.txt || true  # Запуск PHPStan и сохранение результатов
 
       # Шаг 6: Запуск Psalm статического/безопасностного анализатора
-      - name: Run Psalm (Static/Security Analysis)
-        working-directory: ui
+      - name: Run Psalm (Static/Security Analysis)  # Название шага
+        working-directory: ui  # Рабочая директория
         run: |
-          mkdir -p ../sast-out
+          mkdir -p ../sast-out  # Создание директории для результатов
           psalm --config=psalm-ci.xml --stats --output-format=github \
-            > ../sast-out/psalm-results.txt || true
+            > ../sast-out/psalm-results.txt || true  # Запуск Psalm и сохранение результатов
 
       # Шаг 7: Загрузка результатов PHP анализа как артефакта
-      - name: Upload PHP results
-        uses: actions/upload-artifact@v4
+      - name: Upload PHP results  # Название шага
+        uses: actions/upload-artifact@v4  # Действие для загрузки артефактов
         with:
-          name: sast-php-results
+          name: sast-php-results  # Имя артефакта
           path: |
-            sast-out/phpstan-results.txt
-            sast-out/psalm-results.txt
+            sast-out/phpstan-results.txt  # Путь к результатам PHPStan
+            sast-out/psalm-results.txt  # Путь к результатам Psalm
 
   # Задание для анализа C/C++ кода
-  sast-c:
-    name: SAST C/C++ (Cppcheck)
-    runs-on: ubuntu-latest
-    defaults:
+  sast-c:  # Задание для статического анализа C/C++
+    name: SAST C/C++ (Cppcheck)  # Имя задания
+    runs-on: ubuntu-latest  # Используемый образ для задания
+    defaults:  # Значения по умолчанию для заданий
       run:
-        shell: bash
-    steps:
+        shell: bash  # Используемая оболочка
+    steps:  # Определение шагов для данного задания
       # Шаг 1: Получение кода репозитория
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4  # Шаг для клонирования репозитория
 
       # Шаг 2: Установка Cppcheck
-      - name: Install Cppcheck
-        run: sudo apt-get update && sudo apt-get install -y cppcheck
+      - name: Install Cppcheck  # Название шага
+        run: sudo apt-get update && sudo apt-get install -y cppcheck  # Установка инструмента Cppcheck
 
       # Шаг 3: Запуск анализа Cppcheck
-      - name: Run Cppcheck Analysis
+      - name: Run Cppcheck Analysis  # Название шага
         run: |
-          mkdir -p sast-out
+          mkdir -p sast-out  # Создание директории для результатов
           cppcheck --enable=all --suppress=missingIncludeSystem \
                    --inline-suppr --error-exitcode=0 \
-                   src/ 2> sast-out/cppcheck-results.txt || true
+                   src/ 2> sast-out/cppcheck-results.txt || true  # Запуск Cppcheck и сохранение результатов
 
       # Шаг 4: Загрузка результатов C анализа как артефакта
-      - name: Upload C results
-        uses: actions/upload-artifact@v4
+      - name: Upload C results  # Название шага
+        uses: actions/upload-artifact@v4  # Действие для загрузки артефактов
         with:
-          name: sast-c-results
-          path: sast-out/cppcheck-results.txt
+          name: sast-c-results  # Имя артефакта
+          path: sast-out/cppcheck-results.txt  # Путь к результатам Cppcheck
 
   # Задание для анализа Go кода
-  sast-go:
-    name: SAST Go (Gosec)
-    runs-on: ubuntu-latest
-    defaults:
+  sast-go:  # Задание для статического анализа Go
+    name: SAST Go (Gosec)  # Имя задания
+    runs-on: ubuntu-latest  # Используемый образ для задания
+    defaults:  # Значения по умолчанию для заданий
       run:
-        shell: bash
-    steps:
+        shell: bash  # Используемая оболочка
+    steps:  # Определение шагов для данного задания
       # Шаг 1: Получение кода репозитория
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4  # Шаг для клонирования репозитория
 
       # Шаг 2: Настройка Go среды
-      - name: Setup Go
-        uses: actions/setup-go@v5
+      - name: Setup Go  # Название шага
+        uses: actions/setup-go@v5  # Действие для настройки Go
         with:
-          go-version: '1.21'
+          go-version: '1.21'  # Указание версии Go
 
       # Шаг 3: Установка Gosec
-      - name: Install Gosec
-        run: go install github.com/securego/gosec/v2/cmd/gosec@latest
+      - name: Install Gosec  # Название шага
+        run: go install github.com/securego/gosec/v2/cmd/gosec@latest  # Установка инструмента Gosec
 
       # Шаг 4: Запуск анализа Gosec для всех найденных Go модулей
-      - name: Run Gosec Analysis
+      - name: Run Gosec Analysis  # Название шага
         run: |
-          mkdir -p sast-out
-          : > sast-out/gosec-results.txt
-          while IFS= read -r dir; do
-            echo "Analyzing Go module in $dir" | tee -a sast-out/gosec-results.txt
-            ( cd "$dir" && "$HOME/go/bin/gosec" ./... ) 2>&1 | tee -a sast-out/gosec-results.txt || true
-            echo "" >> sast-out/gosec-results.txt
-          done < <(find . -name "go.mod" -exec dirname {} \; | sort -u)
+          mkdir -p sast-out  # Создание директории для результатов
+          : > sast-out/gosec-results.txt  # Создание/перезапись файла результатов
+          while IFS= read -r dir; do  # Цикл по всем найденным Go модулям
+            echo "Analyzing Go module in $dir" | tee -a sast-out/gosec-results.txt  # Журналирование анализа
+            ( cd "$dir" && "$HOME/go/bin/gosec" ./... ) 2>&1 | tee -a sast-out/gosec-results.txt || true  # Выполнение анализа
+            echo "" >> sast-out/gosec-results.txt  # Добавление пустой строки в результаты
+          done < <(find . -name "go.mod" -exec dirname {} \; | sort -u)  # Поиск всех директорий с go.mod
 
       # Шаг 5: Загрузка результатов Go анализа как артефакта
-      - name: Upload Go results
-        uses: actions/upload-artifact@v4
+      - name: Upload Go results  # Название шага
+        uses: actions/upload-artifact@v4  # Действие для загрузки артефактов
         with:
-          name: sast-go-results
-          path: sast-out/gosec-results.txt
+          name: sast-go-results  # Имя артефакта
+          path: sast-out/gosec-results.txt  # Путь к результатам Gosec
 
   # Задание для анализа JavaScript кода
-  sast-js:
-    name: SAST JavaScript (ESLint)
-    runs-on: ubuntu-latest
-    defaults:
+  sast-js:  # Задание для статического анализа JavaScript
+    name: SAST JavaScript (ESLint)  # Имя задания
+    runs-on: ubuntu-latest  # Используемый образ для задания
+    defaults:  # Значения по умолчанию для заданий
       run:
-        shell: bash
-    steps:
+        shell: bash  # Используемая оболочка
+    steps:  # Определение шагов для данного задания
       # Шаг 1: Получение кода репозитория
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4  # Шаг для клонирования репозитория
 
       # Шаг 2: Настройка Node.js среды
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Setup Node.js  # Название шага
+        uses: actions/setup-node@v4  # Действие для настройки Node.js
         with:
-          node-version: '18'
+          node-version: '18'  # Указание версии Node.js
 
       # Шаг 3: Установка ESLint и плагина безопасности
-      - name: Install ESLint + security plugin
+      - name: Install ESLint + security plugin  # Название шага
         run: |
-          npm init -y
-          npm install eslint eslint-plugin-security --save-dev
+          npm init -y  # Инициализация npm
+          npm install eslint eslint-plugin-security --save-dev  # Установка ESLint и плагина безопасности
 
       # Шаг 4: Создание минимальной конфигурации ESLint
-      - name: Create minimal ESLint config
+      - name: Create minimal ESLint config  # Название шага
         run: |
-          cat > .eslintrc.json <<'JSON'
+          cat > .eslintrc.json <<'JSON'  # Создание файла конфигурации ESLint
           {
-            "plugins": ["security"],
+            "plugins": ["security"],  # Подключение плагина безопасности
             "rules": {
-              "security/detect-object-injection": "error",
-              "security/detect-eval-with-expression": "error",
-              "security/detect-non-literal-require": "error",
-              "security/detect-unsafe-regex": "error"
+              "security/detect-object-injection": "error",  # Правило обнаружения инъекции объектов
+              "security/detect-eval-with-expression": "error",  # Правило обнаружения использования eval
+              "security/detect-non-literal-require": "error",  # Правило обнаружения не литерального require
+              "security/detect-unsafe-regex": "error"  # Правило обнаружения небезопасных регулярных выражений
             }
           }
           JSON
 
       # Шаг 5: Запуск ESLint анализа безопасности
-      - name: Run ESLint security analysis
+      - name: Run ESLint security analysis  # Название шага
         run: |
-          mkdir -p sast-out
-          npx eslint "ui/assets/js/**/*.js" --format=json > sast-out/eslint-results.json 2>/dev/null || true
+          mkdir -p sast-out  # Создание директории для результатов
+          npx eslint "ui/assets/js/**/*.js" --format=json > sast-out/eslint-results.json 2>/dev/null || true  # Анализ, сохранение результатов
 
       # Шаг 6: Загрузка результатов JavaScript анализа как артефакта
-      - name: Upload JavaScript results
-        uses: actions/upload-artifact@v4
+      - name: Upload JavaScript results  # Название шага
+        uses: actions/upload-artifact@v4  # Действие для загрузки артефактов
         with:
-          name: sast-js-results
-          path: sast-out/eslint-results.json
+          name: sast-js-results  # Имя артефакта
+          path: sast-out/eslint-results.json  # Путь к результатам ESLint
 
   # Задание для генерации итогового отчета
-  generate-report:
-    name: Generate Summary Report
-    runs-on: ubuntu-latest
+  generate-report:  # Задание для генерации итогового отчета
+    name: Generate Summary Report  # Имя задания
+    runs-on: ubuntu-latest  # Используемый образ для задания
     # Зависит от выполнения всех SAST заданий
-    needs: [sast-php, sast-c, sast-go, sast-js]
+    needs: [sast-php, sast-c, sast-go, sast-js]  # Условие зависимости от других заданий
     # Всегда запускается, даже если предыдущие задания упали
-    if: always()
-    defaults:
+    if: always()  # Запускать всегда, независимо от состояния других заданий
+    defaults:  # Значения по умолчанию для заданий
       run:
-        shell: bash
-    steps:
+        shell: bash  # Используемая оболочка
+    steps:  # Определение шагов для данного задания
       # Шаг 1: Скачивание всех артефактов с результатами
-      - name: Download all SAST results
-        uses: actions/download-artifact@v4
+      - name: Download all SAST results  # Название шага
+        uses: actions/download-artifact@v4  # Действие для скачивания артефактов
         with:
-          path: artifacts
+          path: artifacts  # Путь для сохранения скачанных артефактов
 
       # Шаг 2: Создание HTML отчета с краткими результатами
-      - name: Create HTML summary
+      - name: Create HTML summary  # Название шага
         run: |
-          OUT="sast-summary.html"
-          echo "<html><body><h1>SAST Results Summary</h1>" > "$OUT"
-          echo "<p>Generated on $(date -u)</p>" >> "$OUT"
+          OUT="sast-summary.html"  # Имя результирующего HTML файла
+          echo "<html><body><h1>SAST Results Summary</h1>" > "$OUT"  # Начало HTML
+          echo "<p>Generated on $(date -u)</p>" >> "$OUT"  # Дата генерации
 
-          echo "<h2>PHP Analysis</h2>" >> "$OUT"
-          if [ -f "artifacts/sast-php-results/phpstan-results.txt" ]; then
-            echo "<h3>PHPStan (last 50 lines)</h3><pre>" >> "$OUT"
-            tail -50 "artifacts/sast-php-results/phpstan-results.txt" >> "$OUT"
-            echo "</pre>" >> "$OUT"
+          echo "<h2>PHP Analysis</h2>" >> "$OUT"  # Заголовок анализа PHP
+          if [ -f "artifacts/sast-php-results/phpstan-results.txt" ]; then  # Проверка существования результатов PHPStan
+            echo "<h3>PHPStan (last 50 lines)</h3><pre>" >> "$OUT"  # Подзаголовок для PHPStan
+            tail -50 "artifacts/sast-php-results/phpstan-results.txt" >> "$OUT"  # Добавление последних 50 строк результатов
+            echo "</pre>" >> "$OUT"  # Закрытие блока pre
           else
-            echo "<p>PHPStan results not found</p>" >> "$OUT"
+            echo "<p>PHPStan results not found</p>" >> "$OUT"  # Сообщение об отсутствии результатов
           fi
 
-          if [ -f "artifacts/sast-php-results/psalm-results.txt" ]; then
-            echo "<h3>Psalm (last 50 lines)</h3><pre>" >> "$OUT"
-            tail -50 "artifacts/sast-php-results/psalm-results.txt" >> "$OUT"
-            echo "</pre>" >> "$OUT"
+          if [ -f "artifacts/sast-php-results/psalm-results.txt" ]; then  # Проверка существования результатов Psalm
+            echo "<h3>Psalm (last 50 lines)</h3><pre>" >> "$OUT"  # Подзаголовок для Psalm
+            tail -50 "artifacts/sast-php-results/psalm-results.txt" >> "$OUT"  # Добавление последних 50 строк результатов
+            echo "</pre>" >> "$OUT"  # Закрытие блока pre
           else
-            echo "<p>Psalm results not found</p>" >> "$OUT"
+            echo "<p>Psalm results not found</p>" >> "$OUT"  # Сообщение об отсутствии результатов
           fi
 
-          echo "<h2>C/C++ Analysis</h2>" >> "$OUT"
-          if [ -f "artifacts/sast-c-results/cppcheck-results.txt" ]; then
-            echo "<h3>Cppcheck (first 30 warnings/errors)</h3><pre>" >> "$OUT"
-            grep -E "(error|warning)" "artifacts/sast-c-results/cppcheck-results.txt" | head -30 >> "$OUT" || true
-            echo "</pre>" >> "$OUT"
+          echo "<h2>C/C++ Analysis</h2>" >> "$OUT"  # Заголовок анализа C/C++
+          if [ -f "artifacts/sast-c-results/cppcheck-results.txt" ]; then  # Проверка существования результатов Cppcheck
+            echo "<h3>Cppcheck (first 30 warnings/errors)</h3><pre>" >> "$OUT"  # Подзаголовок для Cppcheck
+            grep -E "(error|warning)" "artifacts/sast-c-results/cppcheck-results.txt" | head -30 >> "$OUT" || true  # Добавление первых 30 ошибок/предупреждений
+            echo "</pre>" >> "$OUT"  # Закрытие блока pre
           else
-            echo "<p>Cppcheck results not found</p>" >> "$OUT"
+            echo "<p>Cppcheck results not found</p>" >> "$OUT"  # Сообщение об отсутствии результатов
           fi
 
-          echo "<h2>Go Analysis</h2>" >> "$OUT"
-          if [ -f "artifacts/sast-go-results/gosec-results.txt" ]; then
-            echo "<h3>Gosec (last 80 lines)</h3><pre>" >> "$OUT"
-            tail -80 "artifacts/sast-go-results/gosec-results.txt" >> "$OUT"
-            echo "</pre>" >> "$OUT"
+          echo "<h2>Go Analysis</h2>" >> "$OUT"  # Заголовок анализа Go
+          if [ -f "artifacts/sast-go-results/gosec-results.txt" ]; then  # Проверка существования результатов Gosec
+            echo "<h3>Gosec (last 80 lines)</h3><pre>" >> "$OUT"  # Подзаголовок для Gosec
+            tail -80 "artifacts/sast-go-results/gosec-results.txt" >> "$OUT"  # Добавление последних 80 строк результатов
+            echo "</pre>" >> "$OUT"  # Закрытие блока pre
           else
-            echo "<p>Gosec results not found</p>" >> "$OUT"
+            echo "<p>Gosec results not found</p>" >> "$OUT"  # Сообщение об отсутствии результатов
           fi
 
-          echo "<h2>JavaScript Analysis</h2>" >> "$OUT"
-          if [ -f "artifacts/sast-js-results/eslint-results.json" ]; then
-            echo "<p>ESLint JSON saved as artifact (see artifacts).</p>" >> "$OUT"
+          echo "<h2>JavaScript Analysis</h2>" >> "$OUT"  # Заголовок анализа JavaScript
+          if [ -f "artifacts/sast-js-results/eslint-results.json" ]; then  # Проверка существования результатов ESLint
+            echo "<p>ESLint JSON saved as artifact (see artifacts).</p>" >> "$OUT"  # Сообщение о сохранении JSON
           else
-            echo "<p>ESLint results not found</p>" >> "$OUT"
+            echo "<p>ESLint results not found</p>" >> "$OUT"  # Сообщение об отсутствии результатов
           fi
 
-          echo "</body></html>" >> "$OUT"
+          echo "</body></html>" >> "$OUT"  # Закрытие HTML
 
       # Шаг 3: Загрузка финального отчета и всех артефактов
-      - name: Upload final report + all artifacts bundle
-        uses: actions/upload-artifact@v4
+      - name: Upload final report + all artifacts bundle  # Название шага
+        uses: actions/upload-artifact@v4  # Действие для загрузки артефактов
         with:
-          name: sast-final-report
+          name: sast-final-report  # Имя артефакта
           path: |
-            sast-summary.html
-            artifacts/
+            sast-summary.html  # Путь к HTML файлу отчета
+            artifacts/  # Путь ко всем артефактам
